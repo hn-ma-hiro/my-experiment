@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>ミュラー・リヤー錯視実験</title>
+    <script src="https://unpkg.com/jspsych@7.3.3"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@1.1.2"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-canvas-keyboard-response@1.1.2"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-survey-text@1.1.2"></script>
+    <link href="https://unpkg.com/jspsych@7.3.3/css/jspsych.css" rel="stylesheet" type="text/css">
+    <style>
+        body { display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f0f0f0; }
+        .jspsych-content { display: flex; flex-direction: column; align-items: center; }
+    </style>
+</head>
+<body>
+    <script>
+        const jsPsych = initJsPsych({
+            on_finish: function() {
+                const results = jsPsych.data.get().filter({trial_type: 'canvas-keyboard-response'}).values();
+                const subjectId = jsPsych.data.get().values()[0]?.response?.subject_id || "unknown";
+                
+                const formattedData = results.map(r => ({
+                    subject_id: subjectId,
+                    timestamp: r.time_elapsed,
+                    angle: r.angle,
+                    wing_length: r.finLength,
+                    standard_len: 200,
+                    pse: r.finalLength || 200,
+                    error_amount: (r.finalLength || 200) - 200
+                }));
+
+                document.body.innerHTML = "<h3>送信中...</h3>";
+
+                // CORS制限を回避するため、単純な形式で送信します
+                const url = 'https://script.google.com/macros/s/AKfycbz81jJgBRRqJZGuAu51t3b7x26eQvlnwHB6q-g0KD6mzD0xcyg00gOGbiFNFD9Nuf2T/exec';
+                
+                fetch(url, {
+                    method: 'POST',
+                    mode: 'no-cors', // これによりブラウザのCORSチェックをスキップします
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: JSON.stringify(formattedData)
+                })
+                .then(() => {
+                    document.body.innerHTML = "<h3>実験終了</h3><p>データが送信されました。ご協力ありがとうございました。</p>";
+                })
+                .catch((e) => {
+                    console.error(e);
+                    document.body.innerHTML = "<h3>送信エラー</h3><p>通信に失敗しました。GAS側の公開設定を確認してください。</p>";
+                });
+            }
+        });
+
+        const angles = [15, 75];
+        const finLengths = [20, 50];
+        const trials = [];
+        for (let i = 0; i < 3; i++) {
+            angles.forEach(a => finLengths.forEach(f => trials.push({ angle: a, finLength: f })));
+        }
+        const shuffledTrials = jsPsych.randomization.repeat(trials, 1);
+
+        const createStimulus = (c, finWidth, angleDeg, comparisonLength) => {
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, c.width, c.height);
+            const midX = c.width / 2, midY = c.height / 2, angleRad = angleDeg * Math.PI / 180;
+            ctx.beginPath();
+            ctx.moveTo(midX - 100, midY - 50); ctx.lineTo(midX + 100, midY - 50);
+            ctx.moveTo(midX - 100, midY - 50); ctx.lineTo(midX - 100 + finWidth * Math.cos(angleRad), midY - 50 - finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX - 100, midY - 50); ctx.lineTo(midX - 100 + finWidth * Math.cos(angleRad), midY - 50 + finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX + 100, midY - 50); ctx.lineTo(midX + 100 - finWidth * Math.cos(angleRad), midY - 50 - finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX + 100, midY - 50); ctx.lineTo(midX + 100 - finWidth * Math.cos(angleRad), midY - 50 + finWidth * Math.sin(angleRad));
+            ctx.stroke();
+            const halfComp = comparisonLength / 2;
+            ctx.beginPath();
+            ctx.moveTo(midX - halfComp, midY + 50); ctx.lineTo(midX + halfComp, midY + 50);
+            ctx.moveTo(midX - halfComp, midY + 50); ctx.lineTo(midX - halfComp - finWidth * Math.cos(angleRad), midY + 50 - finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX - halfComp, midY + 50); ctx.lineTo(midX - halfComp - finWidth * Math.cos(angleRad), midY + 50 + finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX + halfComp, midY + 50); ctx.lineTo(midX + halfComp + finWidth * Math.cos(angleRad), midY + 50 - finWidth * Math.sin(angleRad));
+            ctx.moveTo(midX + halfComp, midY + 50); ctx.lineTo(midX + halfComp + finWidth * Math.cos(angleRad), midY + 50 + finWidth * Math.sin(angleRad));
+            ctx.stroke();
+        };
+
+        const timeline = [
+            { type: jsPsychSurveyText, questions: [{ prompt: "参加者IDを入力してください", name: "subject_id" }] },
+            { type: jsPsychHtmlKeyboardResponse, stimulus: "ミュラー・リヤー錯視実験を開始します。何かキーを押してください。" }
+        ];
+
+        shuffledTrials.forEach((t, idx) => {
+            timeline.push({
+                type: jsPsychCanvasKeyboardResponse,
+                canvas_size: [400, 600],
+                stimulus: (c) => createStimulus(c, t.finLength, t.angle, 200),
+                prompt: `<p>試行 ${idx + 1} / 12</p><p>矢印キーで調整し、スペースキーで確定。</p>`,
+                choices: [' '],
+                on_load: function() {
+                    let compLen = 200, keys = {};
+                    const canvas = document.querySelector('canvas');
+                    const onKeyDown = (e) => { keys[e.code] = true; };
+                    const onKeyUp = (e) => { keys[e.code] = false; };
+                    window.addEventListener('keydown', onKeyDown);
+                    window.addEventListener('keyup', onKeyUp);
+                    const interval = setInterval(() => {
+                        if (keys['ArrowRight']) compLen += 2;
+                        if (keys['ArrowLeft']) compLen -= 2;
+                        createStimulus(canvas, t.finLength, t.angle, compLen);
+                    }, 30);
+                    const observer = new MutationObserver((_, obs) => {
+                        if (!document.querySelector('canvas')) {
+                            clearInterval(interval);
+                            window.removeEventListener('keydown', onKeyDown);
+                            window.removeEventListener('keyup', onKeyUp);
+                            jsPsych.getCurrentTrial().data.finalLength = compLen;
+                            obs.disconnect();
+                        }
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                },
+                data: { ...t }
+            });
+        });
+
+        jsPsych.run(timeline);
+    </script>
+</body>
+</html>
